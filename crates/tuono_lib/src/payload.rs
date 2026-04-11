@@ -4,15 +4,9 @@ use crate::mode::{GLOBAL_MODE, Mode};
 use axum::extract::Request;
 use erased_serde::Serialize;
 use http::Uri;
-use regex::Regex;
 use serde::Serialize as SerdeSerialize;
 use std::collections::HashMap;
 use tuono_internal::config::ServerConfig;
-
-fn has_dynamic_path(route: &str) -> bool {
-    let regex = Regex::new(r"\[(.*?)\]").expect("Failed to create the regex");
-    regex.is_match(route)
-}
 
 /// Location must match client side interface
 #[derive(SerdeSerialize, Debug)]
