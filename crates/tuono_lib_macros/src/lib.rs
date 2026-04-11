@@ -9,7 +9,6 @@ use proc_macro::TokenStream;
 mod api;
 mod handler;
 mod middleware;
-mod utils;
 
 #[proc_macro_attribute]
 pub fn handler(args: TokenStream, item: TokenStream) -> TokenStream {
