@@ -110,7 +110,20 @@ impl SourceBuilder {
 
     fn generate_axum_source(&self) -> String {
         let Self { app, mode, .. } = &self;
-
+        let generated_router = app.route_directory_info.generate_router(false);
+        let main_file_definition: String;
+        let main_file_usage: String;
+        let middleware_import = app.route_directory_info.get_middleware_module_import();
+        if app.has_app_state {
+            main_file_definition = format!(
+                "let user_custom_state = tuono_main_state::main().await;
+                    let router = Router::new()"
+            );
+            main_file_usage = format!(".merge({middleware_import}::{generated_router})"); //.with_state(user_custom_state)
+        } else {
+            main_file_definition = format!("let router Router::new()");
+            main_file_usage = "".to_string();
+        }
         let src = AXUM_ENTRY_POINT
             .replace("\r", "")
             .replace(
@@ -133,22 +146,8 @@ impl SourceBuilder {
                     ""
                 },
             )
-            .replace(
-                "//MAIN_FILE_DEFINITION//",
-                if app.has_app_state {
-                    "let user_custom_state = tuono_main_state::main();"
-                } else {
-                    ""
-                },
-            )
-            .replace(
-                "//MAIN_FILE_USAGE//",
-                if app.has_app_state {
-                    ".with_state(user_custom_state)"
-                } else {
-                    ""
-                },
-            );
+            .replace("//MAIN_FILE_DEFINITION//", main_file_definition.as_str())
+            .replace("//MAIN_FILE_USAGE//", main_file_usage.as_str());
 
         let mut import_http_handler = String::new();
 
@@ -196,10 +195,11 @@ impl SourceBuilder {
 
         if route_directory_info.has_middlewares() {
             let middleware_import = &route_directory_info.get_middleware_module_import();
-            let layers = &route_directory_info.middlewares;
-            for layer in layers {
+            let layers = &route_directory_info.middlewares.lock().unwrap();
+            for layer in layers.iter() {
+                let middleware_fn_call = layer.fn_call_str.clone();
                 layers_str.push_str(&format!(
-                    r#".layer({middleware_import}::{layer}())
+                    r#".layer({middleware_import}::{middleware_fn_call})
                             "#
                 ));
             }
@@ -217,9 +217,6 @@ impl SourceBuilder {
 
         for directory in route_directory_info.directories.clone() {
             route_declarations.push_str(&self.create_routes_declaration(&directory));
-        }
-        if route_directory_info.has_middlewares() {
-            route_declarations.push_str(&self.add_route_layers(route_directory_info));
         }
         for (_key, route) in routes {
             let Route { axum_info, .. } = &route;
@@ -249,6 +246,10 @@ impl SourceBuilder {
         }
 
         route_declarations.push_str(")\n");
+
+        if route_directory_info.has_middlewares() {
+            route_declarations.push_str(&self.add_route_layers(route_directory_info));
+        }
         route_declarations
     }
 

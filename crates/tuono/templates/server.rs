@@ -20,7 +20,6 @@ async fn main() {
 
     //MAIN_FILE_DEFINITION//
 
-    let router = Router::new()
         // ROUTE_BUILDER
         //MAIN_FILE_USAGE//;
 
