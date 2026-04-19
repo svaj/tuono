@@ -1,6 +1,6 @@
 use crate::mode::Mode;
 use crate::route::Route;
-use crate::route_directory_info::{DebugItemFn, MiddlewareData, RouteDirectoryInfo};
+use crate::route_directory_info::RouteDirectoryInfo;
 use glob::{GlobError, glob};
 use http::Method;
 use std::collections::hash_set::HashSet;
@@ -14,8 +14,6 @@ use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
-use std::sync::Arc;
-use syn::Item;
 use tracing::error;
 use tuono_internal::config::Config;
 
@@ -58,21 +56,6 @@ fn has_app_state(base_path: PathBuf) -> std::io::Result<bool> {
         || contents.contains("pub async fn get_router")
         || contents.contains("pub fn main")
         || contents.contains("pub async fn main"))
-}
-
-fn read_router_methods_from_file(path: &str) -> Arc<Vec<DebugItemFn>> {
-    let file = fs_extra::file::read_to_string(path).expect("Failed to read API file");
-    let syntax = syn::parse_file(&file).expect("Unable to parse file");
-    let mut result = Vec::new();
-
-    for item in syntax.items {
-        if let Item::Fn(func) = item {
-            if MiddlewareData::has_middleware_attr(&func.attrs) {
-                result.push(DebugItemFn::from(func));
-            }
-        }
-    }
-    return Arc::new(result);
 }
 
 impl App {

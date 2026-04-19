@@ -86,9 +86,6 @@ impl RouteDirectoryInfo {
     pub fn has_middlewares(&self) -> bool {
         !self.middlewares.lock().unwrap().is_empty()
     }
-    pub fn has_routers(&self) -> bool {
-        !self.routers.lock().unwrap().is_empty()
-    }
 
     pub fn get_middleware_module_import(&self) -> String {
         let base_path = RouteDirectoryInfo::get_base_path();
