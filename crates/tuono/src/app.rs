@@ -47,15 +47,11 @@ pub struct App {
 
 fn has_app_state(base_path: PathBuf) -> std::io::Result<bool> {
     let full_path = base_path.join("src/app.rs");
-    // let fns = read_router_methods_from_file(full_path_str
     let file = File::open(full_path)?;
     let mut buf_reader = BufReader::new(file);
     let mut contents = String::new();
     buf_reader.read_to_string(&mut contents)?;
-    Ok(contents.contains("pub fn get_router")
-        || contents.contains("pub async fn get_router")
-        || contents.contains("pub fn main")
-        || contents.contains("pub async fn main"))
+    Ok(contents.contains("pub fn main") || contents.contains("pub async fn main"))
 }
 
 impl App {

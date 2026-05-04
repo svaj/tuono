@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
+use std::sync::{Arc, Mutex};
+use syn::punctuated::Punctuated;
+use syn::token::Comma;
 use syn::{Attribute, Expr, FnArg, Ident, Item, ItemFn, ReturnType, Type, TypePath, parse_quote};
 
 pub const MIDDLEWARE_FILENAME: &str = "middlewares";
@@ -101,7 +104,7 @@ impl RouteDirectoryInfo {
             .replace('.', "_dot_")
             .replace('-', "_hyphen_")
             .to_lowercase();
-        if module_import != "" {
+        if !module_import.is_empty() {
             module_import += "_"
         }
 
@@ -112,7 +115,7 @@ impl RouteDirectoryInfo {
         std::env::current_dir().expect("Failed to read current_dir")
     }
 
-    pub fn should_collect_route(entry: &PathBuf) -> bool {
+    pub fn should_collect_route(entry: &Path) -> bool {
         let file_extension = entry.extension().expect("Failed to read file extension");
         let file_name = entry.file_stem().expect("Failed to read file name");
 
@@ -146,6 +149,7 @@ impl RouteDirectoryInfo {
     }
 
     fn collect_route(entry: PathBuf, routes: HashMap<String, Route>) -> HashMap<String, Route> {
+        let mut ret_routes: HashMap<String, Route> = routes.clone();
         let mut ret_routes: HashMap<String, Route> = routes.clone();
         let base_path = RouteDirectoryInfo::get_base_path();
         let base_path_str = base_path.to_string_lossy();
@@ -222,7 +226,7 @@ pub struct MiddlewareData {
 
 impl MiddlewareData {
     pub fn new(path: &String) -> Option<Self> {
-        if !(std::fs::exists(&path).unwrap_or_default()) {
+        if !(std::fs::exists(path).unwrap_or_default()) {
             return None;
         }
         let (middlewares, routerfns) = MiddlewareData::read_middleware_methods_from_file(&path);
@@ -234,6 +238,7 @@ impl MiddlewareData {
     }
 
     // Given an array of syn::Attribute, returns true if the segments are "tuono_lib" and "middleware"
+    pub fn has_middleware_attr(attrs: &[Attribute]) -> bool {
     pub fn has_middleware_attr(attrs: &[Attribute]) -> bool {
         attrs.iter().any(|attr| {
             let path = attr.path();
@@ -301,13 +306,15 @@ mod tests {
     use std::io::Write;
     use tempfile::TempDir;
 
-    // #[test]
-    // fn test_has_middlewares() {
-    //     let dir_info = RouteDirectoryInfo {
-    //         middlewares: vec!["middleware1".to_string()],
-    //         ..Default::default()
-    //     };
-    //     assert!(dir_info.has_middlewares());
+    #[test]
+    fn test_has_middlewares() {
+        let dir_info = RouteDirectoryInfo {
+            middlewares: Arc::new(Mutex::new(vec![DebugItemFn {
+                fn_call_str: "middleware1(app_state:AppState)".to_string(),
+            }])),
+            ..Default::default()
+        };
+        assert!(dir_info.has_middlewares());
 
     //     let dir_info_empty = RouteDirectoryInfo::default();
     //     assert!(!dir_info_empty.has_middlewares());
@@ -372,7 +379,7 @@ mod tests {
         let dir_info = RouteDirectoryInfo::new(temp_dir.path()).unwrap();
         assert_eq!(dir_info.path, temp_dir.path().to_string_lossy());
         assert!(!dir_info.directories.is_empty());
-        assert!(!dir_info.middlewares.lock().unwrap().is_empty());
+        assert!(!dir_info.middlewares.lock().unwrap().lock().unwrap().is_empty());
     }
 
     // #[test]
@@ -382,10 +389,16 @@ mod tests {
     //     let mut file = File::create(&middlewares_file).unwrap();
     //     writeln!(file, "#[tuono_lib::middleware]\nfn test_middleware() {{}}").unwrap();
 
-    //     let middleware_data =
-    //         MiddlewareData::new(&middlewares_file.to_string_lossy().to_string()).unwrap();
-    //     assert_eq!(middleware_data.middlewares, vec!["test_middleware"]);
-    // }
+        let middleware_data =
+            MiddlewareData::new(&middlewares_file.to_string_lossy().to_string()).unwrap();
+        let middlewares = middleware_data.middlewares.lock().unwrap();
+        assert_eq!(
+            middlewares.as_slice(),
+            [DebugItemFn {
+                fn_call_str: "test_middleware()".to_string(),
+            }]
+        );
+    }
 
     #[test]
     fn test_has_middleware_attr() {
@@ -407,8 +420,14 @@ mod tests {
     //     )
     //     .unwrap();
 
-    //     let methods =
-    //         MiddlewareData::read_middleware_methods_from_file(&middlewares_file.to_string_lossy());
-    //     assert_eq!(methods, vec!["test_middleware"]);
-    // }
+        let methods =
+            MiddlewareData::read_middleware_methods_from_file(&middlewares_file.to_string_lossy());
+        let middlewares = methods.lock().unwrap();
+        assert_eq!(
+            middlewares.as_slice(),
+            [DebugItemFn {
+                fn_call_str: "test_middleware()".to_string(),
+            }]
+        );
+    }
 }

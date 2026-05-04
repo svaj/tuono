@@ -110,19 +110,17 @@ impl SourceBuilder {
 
     fn generate_axum_source(&self) -> String {
         let Self { app, mode, .. } = &self;
-        let generated_router = app.route_directory_info.generate_router(false);
-        let main_file_definition: String;
-        let main_file_usage: String;
-        let middleware_import = app.route_directory_info.get_middleware_module_import();
+        let mut main_file_definition: &str = " let router = Router::new()";
+        let mut main_file_usage: &str = ";";
+        let mut mainfile_import: &str = "";
+        let mode_str = mode.as_str();
         if app.has_app_state {
-            main_file_definition = format!(
-                "let user_custom_state = tuono_main_state::main().await;
-                    let router = Router::new()"
-            );
-            main_file_usage = format!(".merge({middleware_import}::{generated_router})"); //.with_state(user_custom_state)
-        } else {
-            main_file_definition = format!("let router Router::new()");
-            main_file_usage = "".to_string();
+            main_file_definition = "let user_custom_state = tuono_main_state::main().await;\n 
+            let router = Router::new()";
+            main_file_usage == format!(".merge({middleware_import}::{generated_router})");
+            mainfile_import = r#"#[path="../src/app.rs"]
+            mod tuono_main_state;
+            "#;
         }
         let src = AXUM_ENTRY_POINT
             .replace("\r", "")
@@ -135,19 +133,13 @@ impl SourceBuilder {
                 &self.create_modules_declaration(&app.route_directory_info),
             )
             .replace("/*VERSION*/", crate_version!())
-            .replace("/*MODE*/", mode.as_str())
             .replace(
-                "//MAIN_FILE_IMPORT//",
-                if app.has_app_state {
-                    r#"#[path="../src/app.rs"]
-                    mod tuono_main_state;
-                    "#
-                } else {
-                    ""
-                },
+                "/*MODE*/",
+                format!("const MODE: Mode = {mode_str};").as_ref(),
             )
-            .replace("//MAIN_FILE_DEFINITION//", main_file_definition.as_str())
-            .replace("//MAIN_FILE_USAGE//", main_file_usage.as_str());
+            .replace("//MAIN_FILE_IMPORT//", mainfile_import)
+            .replace("//MAIN_FILE_DEFINITION//", main_file_definition)
+            .replace("//MAIN_FILE_USAGE//", main_file_usage);
 
         let mut import_http_handler = String::new();
 
@@ -204,7 +196,7 @@ impl SourceBuilder {
                 ));
             }
         }
-        return layers_str;
+        layers_str
     }
 
     // Adds Routers with routes to axum
@@ -215,6 +207,7 @@ impl SourceBuilder {
         route_declarations.push_str(r#".merge(Router::new()"#);
         // Group by directory, find dirs with middleware, have that spit out Router::new() with routes and middlewares
 
+        // directories can have their own middlewares and routes, recurse into that directory to get route/middleware info
         for directory in route_directory_info.directories.clone() {
             route_declarations.push_str(&self.create_routes_declaration(&directory));
         }
@@ -247,6 +240,7 @@ impl SourceBuilder {
 
         route_declarations.push_str(")\n");
 
+        // add directory level middleware to routes
         if route_directory_info.has_middlewares() {
             route_declarations.push_str(&self.add_route_layers(route_directory_info));
         }
@@ -264,8 +258,8 @@ impl SourceBuilder {
 
         // add module import per route
         for (path, route) in routes.iter() {
-            if route.axum_info.is_some() {
-                let AxumInfo { module_import, .. } = route.axum_info.as_ref().unwrap();
+            if let Some(route_auxm_info) = &route.axum_info {
+                let AxumInfo { module_import, .. } = route_auxm_info;
 
                 module_declarations.push_str(&format!(
                     r#"#[path="../{ROUTE_FOLDER}{path}.rs"]
