@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use clap::crate_version;
 use tracing::error;
 
-use crate::app::{App, ROUTES_FOLDER_PATH};
+use crate::app::App;
 use crate::mode::Mode;
 use crate::route::AxumInfo;
 use crate::route::Route;
-use crate::route_directory_info::MIDDLEWARE_FILENAME;
+use crate::route_directory_info::ModuleData;
 use crate::route_directory_info::RouteDirectoryInfo;
 use crate::typescript::TypesJar;
 
@@ -110,14 +110,19 @@ impl SourceBuilder {
 
     fn generate_axum_source(&self) -> String {
         let Self { app, mode, .. } = &self;
+        let app_dir_info = &app.app_directory_info;
+
+        let generated_router = app_dir_info.generate_router(false);
         let mut main_file_definition: &str = " let router = Router::new()";
-        let mut main_file_usage: &str = ";";
+        let mut main_file_usage = ";".to_string();
         let mut mainfile_import: &str = "";
         let mode_str = mode.as_str();
         if app.has_app_state {
             main_file_definition = "let user_custom_state = tuono_main_state::main().await;\n 
             let router = Router::new()";
-            main_file_usage == format!(".merge({middleware_import}::{generated_router})");
+            if app_dir_info.has_routers() {
+                main_file_usage = format!(".merge(tuono_main_state::{generated_router});");
+            }
             mainfile_import = r#"#[path="../src/app.rs"]
             mod tuono_main_state;
             "#;
@@ -139,7 +144,7 @@ impl SourceBuilder {
             )
             .replace("//MAIN_FILE_IMPORT//", mainfile_import)
             .replace("//MAIN_FILE_DEFINITION//", main_file_definition)
-            .replace("//MAIN_FILE_USAGE//", main_file_usage);
+            .replace("//MAIN_FILE_USAGE//", &main_file_usage);
 
         let mut import_http_handler = String::new();
 
@@ -182,12 +187,12 @@ impl SourceBuilder {
     }
 
     // Adds calls to .layer() for adding middleware to axum
-    pub fn add_route_layers(&self, route_directory_info: &RouteDirectoryInfo) -> String {
+    pub fn add_route_layers(&self, module: &ModuleData) -> String {
         let mut layers_str = String::from("");
 
-        if route_directory_info.has_middlewares() {
-            let middleware_import = &route_directory_info.get_middleware_module_import();
-            let layers = &route_directory_info.middlewares.lock().unwrap();
+        if module.has_middlewares() {
+            let middleware_import = &module.get_module_import();
+            let layers = &module.middlewares.lock().unwrap();
             for layer in layers.iter() {
                 let middleware_fn_call = layer.fn_call_str.clone();
                 layers_str.push_str(&format!(
@@ -203,8 +208,8 @@ impl SourceBuilder {
     fn create_routes_declaration(&self, route_directory_info: &RouteDirectoryInfo) -> String {
         let routes = route_directory_info.routes.clone();
         let mut route_declarations = String::from("// ROUTE_BUILDER\n");
-
-        route_declarations.push_str(r#".merge(Router::new()"#);
+        let generated_router = route_directory_info.generate_router(false);
+        route_declarations.push_str(format!(r#".merge({generated_router}"#).as_str());
         // Group by directory, find dirs with middleware, have that spit out Router::new() with routes and middlewares
 
         // directories can have their own middlewares and routes, recurse into that directory to get route/middleware info
@@ -241,9 +246,13 @@ impl SourceBuilder {
         route_declarations.push_str(")\n");
 
         // add directory level middleware to routes
+
         if route_directory_info.has_middlewares() {
-            route_declarations.push_str(&self.add_route_layers(route_directory_info));
+            for module in route_directory_info.get_middleware_modules().iter() {
+                route_declarations.push_str(&self.add_route_layers(module));
+            }
         }
+
         route_declarations
     }
 
@@ -268,22 +277,10 @@ impl SourceBuilder {
                 ));
             }
         }
-        // add middleware module import as needed
-        if route_directory_info.has_middlewares() {
-            let path = &route_directory_info.path;
-            let base_path = RouteDirectoryInfo::get_base_path();
-            let base_path_str = base_path.to_string_lossy();
-            let routes_path_str = format!("{base_path_str}{ROUTES_FOLDER_PATH}");
-
-            let replaced_path = path.replace(&routes_path_str, "");
-            let module_path: String = format!("{replaced_path}/{MIDDLEWARE_FILENAME}");
-            let module_import = route_directory_info.get_middleware_module_import();
-
-            module_declarations.push_str(&format!(
-                r#"#[path="../{ROUTE_FOLDER}{module_path}.rs"]
-            mod {module_import};
-            "#
-            ));
+        for module in route_directory_info.module_data.iter() {
+            if module.has_middlewares() || module.has_routers() {
+                module_declarations.push_str(&module.get_pathed_module_use_str())
+            }
         }
 
         module_declarations

@@ -43,6 +43,7 @@ pub struct App {
     pub has_app_state: bool,
     pub config: Option<Config>,
     pub route_directory_info: RouteDirectoryInfo,
+    pub app_directory_info: RouteDirectoryInfo,
 }
 
 fn has_app_state(base_path: PathBuf) -> std::io::Result<bool> {
@@ -63,9 +64,14 @@ impl App {
         let mut app = App {
             route_map: HashMap::new(),
             base_path: base_path.clone(),
-            has_app_state: has_app_state(base_path).unwrap_or(false),
+            has_app_state: has_app_state(base_path.clone()).unwrap_or(false),
             config: None,
-            route_directory_info: RouteDirectoryInfo::new(routes_path).unwrap_or_default(),
+            app_directory_info: RouteDirectoryInfo::new(
+                Path::new(&base_path_str.to_string()),
+                false,
+            )
+            .unwrap_or_default(),
+            route_directory_info: RouteDirectoryInfo::new(routes_path, true).unwrap_or_default(),
         };
 
         app.collect_routes();
