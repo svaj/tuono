@@ -5,9 +5,9 @@
 mod app;
 pub mod cli;
 mod commands;
-mod macros;
 mod mode;
 mod module_data;
+mod module_functions;
 mod process_manager;
 mod route;
 mod route_directory_info;

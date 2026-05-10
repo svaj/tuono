@@ -3,19 +3,19 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
-use syn::{Attribute, Expr, FnArg, Ident, Item, ItemFn, ReturnType, Type, TypePath, parse_quote};
+use syn::{Expr, FnArg, Ident, Item, ItemFn, parse_quote};
 
-use crate::macros::TuonoMacros;
+use crate::module_functions::TuonoFunction;
 
 pub const DEFAULT_ROUTER_STR: &str = "Router::new()";
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DebugItemFn {
     pub fn_call_str: String,
-    pub is_router_fn: bool, // TODO: remove or replace with enum type of available TuonoLib defined functions
-                            // TODO: add argument recievers / types to match if available when calling?
-                            // TODO: worry about adding generics support or matching traits
-                            // TODO: ensure function is publically available. in the rust module
+    pub type_of_fn: TuonoFunction,
+    // TODO: add argument recievers / types to match if available when calling?
+    // TODO: worry about adding generics support or matching traits
+    // TODO: ensure function is publically available. in the rust module
 }
 
 impl DebugItemFn {
@@ -39,22 +39,24 @@ impl DebugItemFn {
     }
 }
 
-impl From<ItemFn> for DebugItemFn {
-    fn from(item: ItemFn) -> Self {
-        return DebugItemFn {
-            fn_call_str: DebugItemFn::get_fn_call_to_str(&item),
-            is_router_fn: ModuleData::is_router_fn(&item),
+impl TryFrom<ItemFn> for DebugItemFn {
+    type Error = &'static str;
+    fn try_from(item: ItemFn) -> Result<Self, Self::Error> {
+        let Ok(type_of_fn) = TuonoFunction::try_from(item.clone()) else {
+            return Err("Unknown function");
         };
+        return Ok(Self {
+            // todo, impl tryfrom for pattern for get_fn_call_to_str
+            fn_call_str: DebugItemFn::get_fn_call_to_str(&item),
+            type_of_fn,
+        });
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ModuleData {
     pub full_path: String,
-    // todo restrict to .rs files
-    // todo resolve base crate path, or relative to where we started. (maybe this goes in RouteDirectoryInfo?)
-    // todo ensure generation of router path supports wildcards  & double check extractor work works (maybe this is in RouteDirectoryInfo)
-    //TODO add type enum to get fns by type
+    //TODO add type enum to get fns by type (use MacroTypes)
     // todo add helper function to handle dealing with lock arc/mutex nonsense.
     pub middlewares: Arc<Mutex<Vec<DebugItemFn>>>, // Todo verify substates work
     pub routers: Arc<Mutex<Vec<DebugItemFn>>>,
@@ -163,52 +165,6 @@ impl ModuleData {
         format!("{router};")
     }
 
-    // Given an array of syn::Attribute, returns true if the segments are "tuono_lib" and "middleware" for example
-    pub fn has_macro_attr(attrs: &[Attribute], macro_attr: TuonoMacros) -> bool {
-        attrs.iter().any(|attr| {
-            let path = attr.path();
-
-            let segments: Vec<_> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-
-            segments == ["tuono_lib", macro_attr.as_str()]
-        })
-    }
-
-    fn compare_return_type_ignore_generics(item: &ItemFn, expected_type_name: &str) -> bool {
-        // 1. Get return type from signature
-        if let ReturnType::Type(_, ty) = &item.sig.output {
-            // 2. Look for TypePath (e.g., std::vec::Vec)
-            if let Type::Path(TypePath { path, .. }) = &**ty {
-                // 3. Get the last segment, which is the type name
-                if let Some(last_segment) = path.segments.last() {
-                    // 4. Compare ident ("Vec") and ignore arguments ("<...>")
-                    return last_segment.ident.to_string() == expected_type_name;
-                }
-            }
-        }
-        false
-    }
-
-    pub fn is_middleware_fn(item_fn: &ItemFn) -> bool {
-        ModuleData::has_macro_attr(&item_fn.attrs, TuonoMacros::Middleware)
-    }
-    pub fn is_handler_fn(item_fn: &ItemFn) -> bool {
-        ModuleData::has_macro_attr(&item_fn.attrs, TuonoMacros::Handler)
-    }
-    pub fn is_api_handler_fn(item_fn: &ItemFn) -> bool {
-        ModuleData::has_macro_attr(&item_fn.attrs, TuonoMacros::Api)
-    }
-
-    // Given an ItemFn, checks its return type to see if its a Router / implemented all the traits of a router
-    pub fn is_router_fn(item_fn: &ItemFn) -> bool {
-        // can't get return type :(
-        let ReturnType::Type(_rarrow, _box_type) = &item_fn.sig.output else {
-            // see if return type is Router
-            return false;
-        };
-        return ModuleData::compare_return_type_ignore_generics(item_fn, &"Router");
-    }
-
     // Reads a file and returns a Vector of Strings representing functions that are TuonoMacros or Router generating functions
     pub fn read_module_methods_from_file(
         path: &str,
@@ -218,7 +174,16 @@ impl ModuleData {
         Arc<Mutex<Vec<DebugItemFn>>>,
         Arc<Mutex<Vec<DebugItemFn>>>,
     ) {
-        // todo refactor to have one locked vector of module methods, by type maybe?
+        // Only process files with ".rs" extension
+        if !path.ends_with(".rs") {
+            return (
+                Arc::new(Mutex::new(Vec::new())),
+                Arc::new(Mutex::new(Vec::new())),
+                Arc::new(Mutex::new(Vec::new())),
+                Arc::new(Mutex::new(Vec::new())),
+            );
+        }
+
         let mut middlewares = Vec::new();
         let mut router_fns = Vec::new();
         let mut api_handlers = Vec::new();
@@ -242,14 +207,19 @@ impl ModuleData {
 
         for item in syntax.items {
             if let Item::Fn(func) = item {
-                if ModuleData::is_middleware_fn(&func) {
-                    middlewares.push(DebugItemFn::from(func));
-                } else if ModuleData::is_api_handler_fn(&func) {
-                    api_handlers.push(DebugItemFn::from(func));
-                } else if ModuleData::is_handler_fn(&func) {
-                    handlers.push(DebugItemFn::from(func));
-                } else if ModuleData::is_router_fn(&func) {
-                    router_fns.push(DebugItemFn::from(func));
+                // Only process public functions
+                let is_pub = matches!(func.vis, syn::Visibility::Public(_));
+                if !is_pub {
+                    continue;
+                }
+                let Ok(debug_fn) = DebugItemFn::try_from(func) else {
+                    continue;
+                };
+                match debug_fn.type_of_fn {
+                    TuonoFunction::ApiHandler => api_handlers.push(debug_fn),
+                    TuonoFunction::Middleware => middlewares.push(debug_fn),
+                    TuonoFunction::Handler => handlers.push(debug_fn),
+                    TuonoFunction::RouterGenertor => router_fns.push(debug_fn),
                 }
             }
         }
@@ -274,7 +244,7 @@ mod tests {
         let dir_info = ModuleData {
             middlewares: Arc::new(Mutex::new(vec![DebugItemFn {
                 fn_call_str: "middleware1(app_state:AppState)".to_string(),
-                is_router_fn: false,
+                type_of_fn: TuonoFunction::Middleware,
             }])),
             ..Default::default()
         };
@@ -307,27 +277,9 @@ mod tests {
             middlewares.as_slice(),
             [DebugItemFn {
                 fn_call_str: "test_middleware()".to_string(),
-                is_router_fn: false,
+                type_of_fn: TuonoFunction::Middleware,
             }]
         );
-    }
-
-    // TODO Update when adding pub support to ensure a non pub method is not detected, (or is but gives a warning?)
-    #[test]
-    fn test_has_middleware_attr() {
-        // Create a dummy function with the middleware attribute
-        let func: syn::ItemFn = syn::parse_quote!(
-            #[tuono_lib::middleware]
-            fn test_fn() {}
-        );
-        assert!(ModuleData::is_middleware_fn(&func));
-
-        // Create a dummy function with a different attribute
-        let func2: syn::ItemFn = syn::parse_quote!(
-            #[other_attr]
-            fn test_fn() {}
-        );
-        assert!(!ModuleData::is_middleware_fn(&func2));
     }
 
     #[test]
@@ -349,7 +301,7 @@ mod tests {
             middlewares.as_slice(),
             [DebugItemFn {
                 fn_call_str: "test_middleware()".to_string(),
-                is_router_fn: false,
+                type_of_fn: TuonoFunction::Middleware,
             }]
         );
         assert_eq!(routers.len(), 0);

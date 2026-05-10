@@ -15,7 +15,8 @@ pub struct RouteDirectoryInfo {
     pub module_data: Vec<ModuleData>,
     pub routes: HashMap<String, Route>, // TODO match up module_data.routers to route & route options if available.
 }
-
+// todo resolve base crate path, or relative to where we started. (maybe this goes in RouteDirectoryInfo?)
+// todo ensure generation of router path supports wildcards  & double check extractor work works (maybe this is in RouteDirectoryInfo)
 // TODO Refactor route collection and route generation in sourceBuilder to match.
 // TODO add fn to generate module imports relative to base module, to expose to app's routes dir info
 impl RouteDirectoryInfo {
