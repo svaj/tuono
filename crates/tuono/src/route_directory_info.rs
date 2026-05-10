@@ -1,38 +1,35 @@
 use crate::app::{IGNORE_EXTENSIONS, IGNORE_FILES, ROUTES_FOLDER_PATH};
+use crate::module_data::{DEFAULT_ROUTER_STR, ModuleData};
 use crate::route::Route;
-use quote::quote;
 use std::collections::{HashMap, hash_map::Entry};
 use std::fmt::Debug;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use syn::punctuated::Punctuated;
-use syn::token::Comma;
-use syn::{Attribute, Expr, FnArg, Ident, Item, ItemFn, ReturnType, Type, TypePath, parse_quote};
-
-pub const DEFAULT_ROUTER_STR: &str = "Router::new()";
 
 #[derive(Clone, Debug, Default)]
 pub struct RouteDirectoryInfo {
+    #[allow(unused)]
+    pub base_path: String,
     pub directories: Vec<RouteDirectoryInfo>,
-    pub routes: HashMap<String, Route>,
     pub module_data: Vec<ModuleData>,
+    pub routes: HashMap<String, Route>, // TODO match up module_data.routers to route & route options if available.
 }
 
+// TODO Refactor route collection and route generation in sourceBuilder to match.
+// TODO add fn to generate module imports relative to base module, to expose to app's routes dir info
 impl RouteDirectoryInfo {
-    pub fn new(path: &Path, recurse: bool) -> io::Result<RouteDirectoryInfo> {
+    pub fn new(path: &Path, recurse: bool, base_path: &Path) -> io::Result<RouteDirectoryInfo> {
         if path.is_dir() {
             let mut directories = Vec::new();
             let mut routes: HashMap<String, Route> = HashMap::new();
             let mut module_data: Vec<ModuleData> = Vec::new();
             for entry in fs::read_dir(path)? {
-                let entry = entry?;
-                let entry_path = entry.path();
+                let entry_path = entry?.path();
 
                 // recursively search directories
                 if entry_path.is_dir() {
-                    let sub_dir_info = RouteDirectoryInfo::new(&entry_path, recurse)?;
+                    let sub_dir_info = RouteDirectoryInfo::new(&entry_path, recurse, base_path)?;
                     directories.push(sub_dir_info);
                 // handle files
                 } else if entry_path.is_file() {
@@ -43,12 +40,14 @@ impl RouteDirectoryInfo {
                     module_data.push(file_module_data);
                     // Generate Routes from file, add to routes
                     if RouteDirectoryInfo::should_collect_route(&entry_path) {
-                        routes = RouteDirectoryInfo::collect_route(entry_path, routes);
+                        routes =
+                            RouteDirectoryInfo::collect_route(entry_path.to_path_buf(), routes);
                     }
                 }
             }
 
             let dir_info = RouteDirectoryInfo {
+                base_path: base_path.to_string_lossy().to_string(),
                 directories,
                 routes,
                 module_data,
@@ -58,6 +57,9 @@ impl RouteDirectoryInfo {
         } else {
             // If it's not a directory, return an empty DirectoryInfo (though we don't push for non-dirs)
             Ok(RouteDirectoryInfo {
+                base_path: RouteDirectoryInfo::get_base_path()
+                    .to_string_lossy()
+                    .to_string(),
                 directories: Vec::new(),
                 routes: HashMap::new(),
                 module_data: vec![
@@ -97,13 +99,27 @@ impl RouteDirectoryInfo {
         if !self.has_routers() {
             return format!("{DEFAULT_ROUTER_STR}{semicolon_str}");
         }
-        // just use the first router function we find in this dir.
-        let module = self
+
+        let modules_with_routers: Vec<&ModuleData> = self
             .module_data
             .iter()
-            .find(|m| m.has_routers())
-            .expect("Cannot; find routers in module with routers.");
-        module.generate_router(ending_semicolon)
+            .filter(|&m| m.has_routers())
+            .collect();
+
+        let full_paths: Vec<String> = modules_with_routers
+            .clone()
+            .into_iter()
+            .map(|m| m.full_path.to_string())
+            .collect();
+        if full_paths.len() as i32 > 1 {
+            println!(
+                "Warning, Route directory with more than 1 module with router functions found ({}), using first ({})",
+                full_paths.join(", "),
+                full_paths[0]
+            )
+        }
+        // just use the first router function we find in this dir.
+        modules_with_routers[0].generate_router(ending_semicolon)
     }
 
     pub fn should_collect_route(entry: &Path) -> bool {
@@ -153,219 +169,12 @@ impl RouteDirectoryInfo {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct DebugItemFn {
-    pub fn_call_str: String,
-    pub is_router_fn: bool,
-}
-
-impl DebugItemFn {
-    pub fn get_fn_call_to_str(item: &ItemFn) -> String {
-        let mut arguments: Punctuated<FnArg, Comma> = Punctuated::new();
-        let mut passed_arguments: Punctuated<Expr, Comma> = Punctuated::new();
-        for (i, arg) in item.sig.inputs.iter().enumerate() {
-            if let FnArg::Typed(pat_type) = arg {
-                let arg_name = Ident::new(&format!("arg_{}", i), item.sig.ident.span());
-                let arg_type = &pat_type.ty;
-                let argument: FnArg = parse_quote!(#arg_name: #arg_type);
-                arguments.push(argument);
-                passed_arguments.push(parse_quote!(#arg_name));
-            }
-        }
-
-        let sig_ident_str = &item.sig.ident.to_string();
-        let with_args_str = quote!(#passed_arguments).to_string();
-
-        format!("{sig_ident_str}({with_args_str})")
-    }
-}
-
-impl From<ItemFn> for DebugItemFn {
-    fn from(item: ItemFn) -> Self {
-        return DebugItemFn {
-            fn_call_str: DebugItemFn::get_fn_call_to_str(&item),
-            is_router_fn: ModuleData::is_router_fn(&item),
-        };
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ModuleData {
-    pub full_path: String,
-    pub middlewares: Arc<Mutex<Vec<DebugItemFn>>>,
-    pub routers: Arc<Mutex<Vec<DebugItemFn>>>,
-}
-
-impl ModuleData {
-    pub fn new(path_str: &String) -> Option<Self> {
-        if !(std::fs::exists(path_str).unwrap_or_default()) {
-            return None;
-        }
-        let (middlewares, routers) = ModuleData::read_module_methods_from_file(&path_str);
-
-        Some(ModuleData {
-            full_path: path_str.clone(),
-            middlewares,
-            routers,
-        })
-    }
-
-    pub fn has_middlewares(&self) -> bool {
-        !self.middlewares.lock().unwrap().is_empty()
-    }
-    pub fn has_routers(&self) -> bool {
-        !self.routers.lock().unwrap().is_empty()
-    }
-
-    pub fn get_pathed_module_use_str(&self) -> String {
-        let path = &self.full_path;
-        let module_import = self.get_module_import();
-        format!(
-            r#"#[path="{path}"]
-        mod {module_import};
-        "#
-        )
-    }
-
-    pub fn get_module_import(&self) -> String {
-        let Some(extension) = Path::new(&self.full_path)
-            .extension()
-            .unwrap_or_default()
-            .to_str()
-        else {
-            return "".to_string();
-        };
-        let with_dot = ".".to_string() + extension;
-        self.full_path
-            .as_str()
-            .to_string()
-            .replace(&with_dot, "")
-            .replace('/', "_")
-            .replace('.', "_dot_")
-            .replace('-', "_hyphen_")
-            .to_lowercase()
-    }
-    pub fn generate_router(&self, ending_semicolon: bool) -> String {
-        let semicolon_str = if ending_semicolon { ";" } else { "" };
-        if self.routers.lock().unwrap().is_empty() {
-            return format!("{DEFAULT_ROUTER_STR}{semicolon_str}");
-        }
-        let mut router: String = String::new();
-        for (i, router_fn) in self.routers.lock().unwrap().iter().enumerate() {
-            let fn_ident = router_fn.fn_call_str.clone();
-            if i > 0 {
-                router = format!("{router}.merge({fn_ident})");
-            } else {
-                router = fn_ident
-            }
-        }
-        if !ending_semicolon {
-            return router;
-        }
-        return format!("{router};");
-    }
-
-    // Given an array of syn::Attribute, returns true if the segments are "tuono_lib" and "middleware"
-    pub fn has_middleware_attr(attrs: &[Attribute]) -> bool {
-        attrs.iter().any(|attr| {
-            let path = attr.path();
-
-            let segments: Vec<_> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-
-            segments == ["tuono_lib", "middleware"]
-        })
-    }
-    fn compare_return_type_ignore_generics(item: &ItemFn, expected_type_name: &str) -> bool {
-        // 1. Get return type from signature
-        if let ReturnType::Type(_, ty) = &item.sig.output {
-            // 2. Look for TypePath (e.g., std::vec::Vec)
-            if let Type::Path(TypePath { path, .. }) = &**ty {
-                // 3. Get the last segment, which is the type name
-                if let Some(last_segment) = path.segments.last() {
-                    // 4. Compare ident ("Vec") and ignore arguments ("<...>")
-                    return last_segment.ident.to_string() == expected_type_name;
-                }
-            }
-        }
-        false
-    }
-    // Given an ItemFn, checks its return type to see if its a Router / implemented all the traits of a router
-    pub fn is_router_fn(item_fn: &ItemFn) -> bool {
-        // can't get return type :(
-        let ReturnType::Type(_rarrow, _box_type) = &item_fn.sig.output else {
-            // see if return type is Router
-            return false;
-        };
-        return ModuleData::compare_return_type_ignore_generics(item_fn, &"Router");
-    }
-
-    // Reads a middlewares.rs file and returns a Vector of Strings representing functions that were decorated with the tuono_lib::middleware macro
-    pub fn read_module_methods_from_file(
-        path: &str,
-    ) -> (Arc<Mutex<Vec<DebugItemFn>>>, Arc<Mutex<Vec<DebugItemFn>>>) {
-        let mut result = Vec::new();
-        let mut router_fns = Vec::new();
-        let Ok(file) = fs_extra::file::read_to_string(path) else {
-            return (
-                Arc::new(Mutex::new(result)),
-                Arc::new(Mutex::new(router_fns)),
-            );
-        };
-        let Ok(syntax) = syn::parse_file(&file) else {
-            return (
-                Arc::new(Mutex::new(result)),
-                Arc::new(Mutex::new(router_fns)),
-            );
-        };
-
-        for item in syntax.items {
-            if let Item::Fn(func) = item {
-                if ModuleData::has_middleware_attr(&func.attrs) {
-                    result.push(DebugItemFn::from(func));
-                } else {
-                    if ModuleData::is_router_fn(&func) {
-                        router_fns.push(DebugItemFn::from(func));
-                    }
-                }
-            }
-        }
-        return (
-            Arc::new(Mutex::new(result)),
-            Arc::new(Mutex::new(router_fns)),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs::File;
     use std::io::Write;
     use tempfile::TempDir;
-
-    #[test]
-    fn test_has_middlewares() {
-        let dir_info = ModuleData {
-            middlewares: Arc::new(Mutex::new(vec![DebugItemFn {
-                fn_call_str: "middleware1(app_state:AppState)".to_string(),
-                is_router_fn: false,
-            }])),
-            ..Default::default()
-        };
-        assert!(dir_info.has_middlewares());
-    }
-
-    #[test]
-    fn test_get_middleware_module_import() {
-        let module_info = ModuleData {
-            full_path: "/some/path/src/routes/middlewares.rs".to_string(),
-            ..Default::default()
-        };
-        // Assuming base path is current dir, but this might vary
-        // For test, we can check the format
-        let import = module_info.get_module_import();
-        assert!(import.ends_with("_middlewares"));
-    }
 
     #[test]
     fn test_get_base_path() {
@@ -411,62 +220,9 @@ mod tests {
         let mut file = File::create(&middlewares_file).unwrap();
         writeln!(file, "#[tuono_lib::middleware]\nfn test_middleware() {{}}").unwrap();
 
-        let dir_info = RouteDirectoryInfo::new(temp_dir.path(), true).unwrap();
+        let dir_info = RouteDirectoryInfo::new(&temp_dir.path(), true, &temp_dir.path()).unwrap();
         assert!(!dir_info.directories.is_empty());
         assert!(!dir_info.module_data.is_empty());
         assert!(!dir_info.get_middleware_modules().is_empty());
-    }
-
-    #[test]
-    fn test_middleware_data_new() {
-        let temp_dir = TempDir::new().unwrap();
-        let middlewares_file = temp_dir.path().join("middlewares.rs");
-        let mut file = File::create(&middlewares_file).unwrap();
-        writeln!(file, "#[tuono_lib::middleware]\nfn test_middleware() {{}}").unwrap();
-
-        let middleware_data =
-            ModuleData::new(&middlewares_file.to_string_lossy().to_string()).unwrap();
-        let middlewares = middleware_data.middlewares.lock().unwrap();
-        assert_eq!(
-            middlewares.as_slice(),
-            [DebugItemFn {
-                fn_call_str: "test_middleware()".to_string(),
-                is_router_fn: false,
-            }]
-        );
-    }
-
-    #[test]
-    fn test_has_middleware_attr() {
-        let attr: Attribute = syn::parse_quote!(#[tuono_lib::middleware]);
-        assert!(ModuleData::has_middleware_attr(&[attr]));
-
-        let attr2: Attribute = syn::parse_quote!(#[other_attr]);
-        assert!(!ModuleData::has_middleware_attr(&[attr2]));
-    }
-
-    #[test]
-    fn test_read_middleware_methods_from_file() {
-        let temp_dir = TempDir::new().unwrap();
-        let middlewares_file = temp_dir.path().join("middlewares.rs");
-        let mut file = File::create(&middlewares_file).unwrap();
-        writeln!(
-            file,
-            "#[tuono_lib::middleware]\nfn test_middleware() {{}}\nfn other_fn() {{}}"
-        )
-        .unwrap();
-
-        let (methods, router_methods) =
-            ModuleData::read_module_methods_from_file(&middlewares_file.to_string_lossy());
-        let middlewares = methods.lock().unwrap();
-        let routers = router_methods.lock().unwrap();
-        assert_eq!(
-            middlewares.as_slice(),
-            [DebugItemFn {
-                fn_call_str: "test_middleware()".to_string(),
-                is_router_fn: false,
-            }]
-        );
-        assert_eq!(routers.len(), 0);
     }
 }

@@ -134,9 +134,11 @@ impl ApiData {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Route {
     path: String,
-    pub is_dynamic: bool,
-    pub axum_info: Option<AxumInfo>,
-    pub api_data: Option<ApiData>,
+    // add pub module_data for filename.
+    pub is_dynamic: bool,            // TODO: add catch-all pattern?
+    pub axum_info: Option<AxumInfo>, // TODO: probably should be a singular module data
+    pub api_data: Option<ApiData>,   // TODO: probably can come from the same module data
+                                     // TODO in sourcebuilder, apply module middleware / router generation to this route if defined  in its module data.
 }
 
 impl Route {
@@ -182,11 +184,12 @@ impl Route {
         };
 
         if !parent_dir.is_dir()
-            && let Err(err) = create_all(parent_dir, false) {
-                return Err(format!(
-                    "Failed to create the parent directory {parent_dir:?}\nError: {err}"
-                ));
-            }
+            && let Err(err) = create_all(parent_dir, false)
+        {
+            return Err(format!(
+                "Failed to create the parent directory {parent_dir:?}\nError: {err}"
+            ));
+        }
 
         trace!("Saving the HTML file: {:?}", file_path);
 
@@ -215,11 +218,12 @@ impl Route {
             };
 
             if !data_parent_dir.is_dir()
-                && let Err(err) = create_all(data_parent_dir, false) {
-                    return Err(format!(
-                        "Failed to create the parent directory {data_parent_dir:?}\n Error: {err}"
-                    ));
-                }
+                && let Err(err) = create_all(data_parent_dir, false)
+            {
+                return Err(format!(
+                    "Failed to create the parent directory {data_parent_dir:?}\n Error: {err}"
+                ));
+            }
 
             let base = Url::parse("http://localhost:3000/__tuono/data").unwrap();
 

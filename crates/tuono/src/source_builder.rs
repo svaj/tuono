@@ -9,9 +9,9 @@ use tracing::error;
 
 use crate::app::App;
 use crate::mode::Mode;
+use crate::module_data::ModuleData;
 use crate::route::AxumInfo;
 use crate::route::Route;
-use crate::route_directory_info::ModuleData;
 use crate::route_directory_info::RouteDirectoryInfo;
 use crate::typescript::TypesJar;
 
@@ -107,7 +107,6 @@ impl SourceBuilder {
 
         Ok(())
     }
-
     fn generate_axum_source(&self) -> String {
         let Self { app, mode, .. } = &self;
         let app_dir_info = &app.app_directory_info;
@@ -204,6 +203,7 @@ impl SourceBuilder {
         layers_str
     }
 
+    // TODO generating the import should live in RouteDirectoryInfo and called from here.  Add router generation per directory.
     // Adds Routers with routes to axum
     fn create_routes_declaration(&self, route_directory_info: &RouteDirectoryInfo) -> String {
         let routes = route_directory_info.routes.clone();
@@ -221,6 +221,7 @@ impl SourceBuilder {
             if !axum_info.is_some() {
                 continue;
             }
+            // TODO this should be on a route's module data and import should be relative to base module's crate if public
             let AxumInfo {
                 axum_route,
                 module_import,

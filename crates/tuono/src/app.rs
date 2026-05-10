@@ -69,9 +69,11 @@ impl App {
             app_directory_info: RouteDirectoryInfo::new(
                 Path::new(&base_path_str.to_string()),
                 false,
+                Path::new(&base_path_str.to_string()),
             )
             .unwrap_or_default(),
-            route_directory_info: RouteDirectoryInfo::new(routes_path, true).unwrap_or_default(),
+            route_directory_info: RouteDirectoryInfo::new(routes_path, true, routes_path)
+                .unwrap_or_default(),
         };
 
         app.collect_routes();
