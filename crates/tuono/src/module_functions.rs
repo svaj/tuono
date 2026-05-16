@@ -1,5 +1,6 @@
 use syn::{Attribute, ItemFn, ReturnType, Type, TypePath};
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum TuonoMacro {
     Api,
     Handler,
@@ -8,7 +9,7 @@ pub enum TuonoMacro {
 impl TuonoMacro {
     pub fn as_str(&self) -> &'static str {
         match self {
-            TuonoMacro::Api => "api_handler",
+            TuonoMacro::Api => "api",
             TuonoMacro::Handler => "handler",
             TuonoMacro::Middleware => "middleware",
         }
@@ -16,10 +17,12 @@ impl TuonoMacro {
 }
 
 #[allow(dead_code)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum InternalTuonoMacro {
     Type,
 }
 #[allow(dead_code)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum AllTuonoMacros {
     TuonoMacros(TuonoMacro),
     InternalTuonoMacros(InternalTuonoMacro),
@@ -128,10 +131,10 @@ impl std::convert::TryFrom<String> for TuonoFunction {
 
     fn try_from(s: String) -> Result<Self, Self::Error> {
         match s.as_str() {
-            "api_handler" => Ok(TuonoFunction::ApiHandler),
+            "api" => Ok(TuonoFunction::ApiHandler),
             "handler" => Ok(TuonoFunction::Handler),
             "middleware" => Ok(TuonoFunction::Middleware),
-            "rotuer_generator" => Ok(TuonoFunction::RouterGenertor),
+            "router_generator" => Ok(TuonoFunction::RouterGenertor),
             _ => Err(()),
         }
     }

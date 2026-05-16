@@ -219,11 +219,27 @@ mod tests {
         File::create(&file).unwrap();
         let middlewares_file = temp_dir.path().join("middlewares.rs");
         let mut file = File::create(&middlewares_file).unwrap();
-        writeln!(file, "#[tuono_lib::middleware]\nfn test_middleware() {{}}").unwrap();
+        writeln!(
+            file,
+            "#[tuono_lib::middleware]\npub fn test_middleware() {{}}"
+        )
+        .unwrap();
 
-        let dir_info = RouteDirectoryInfo::new(&temp_dir.path(), true, &temp_dir.path()).unwrap();
-        assert!(!dir_info.directories.is_empty());
-        assert!(!dir_info.module_data.is_empty());
-        assert!(!dir_info.get_middleware_modules().is_empty());
+        // Use ? to propagate potential IO errors during directory info creation
+        let dir_info = RouteDirectoryInfo::new(&temp_dir.path(), true, &temp_dir.path())
+            .expect("Failed to create RouteDirectoryInfo");
+
+        assert!(
+            !dir_info.directories.is_empty(),
+            "Should find at least one subdirectory."
+        );
+        assert!(
+            !dir_info.module_data.is_empty(),
+            "Should collect module data for files."
+        );
+        assert!(
+            !dir_info.get_middleware_modules().is_empty(),
+            "Should detect middleware functions in middlewares.rs"
+        );
     }
 }

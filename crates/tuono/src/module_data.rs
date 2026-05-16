@@ -15,7 +15,6 @@ pub struct DebugItemFn {
     pub type_of_fn: TuonoFunction,
     // TODO: add argument recievers / types to match if available when calling?
     // TODO: worry about adding generics support or matching traits
-    // TODO: ensure function is publically available. in the rust module
 }
 
 impl DebugItemFn {
@@ -46,7 +45,6 @@ impl TryFrom<ItemFn> for DebugItemFn {
             return Err("Unknown function");
         };
         return Ok(Self {
-            // todo, impl tryfrom for pattern for get_fn_call_to_str
             fn_call_str: DebugItemFn::get_fn_call_to_str(&item),
             type_of_fn,
         });
@@ -56,9 +54,9 @@ impl TryFrom<ItemFn> for DebugItemFn {
 #[derive(Debug, Clone, Default)]
 pub struct ModuleData {
     pub full_path: String,
-    //TODO add type enum to get fns by type (use MacroTypes)
+    //TODO combine middlewares/routers/handlers/api_handers into just module_functions vector, when building source we can filter by type, or add get_X_functions in this impl.
     // todo add helper function to handle dealing with lock arc/mutex nonsense.
-    pub middlewares: Arc<Mutex<Vec<DebugItemFn>>>, // Todo verify substates work
+    pub middlewares: Arc<Mutex<Vec<DebugItemFn>>>, // Todo verify substates work when layering/merging
     pub routers: Arc<Mutex<Vec<DebugItemFn>>>,
     #[allow(dead_code)]
     pub handlers: Arc<Mutex<Vec<DebugItemFn>>>,
@@ -268,17 +266,20 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let middlewares_file = temp_dir.path().join("middlewares.rs");
         let mut file = File::create(&middlewares_file).unwrap();
-        writeln!(file, "#[tuono_lib::middleware]\nfn test_middleware() {{}}").unwrap();
-
+        writeln!(
+            file,
+            "#[tuono_lib::middleware]\npub fn test_middleware() {{}}"
+        )
+        .unwrap();
         let middleware_data =
-            ModuleData::new(&middlewares_file.to_string_lossy().to_string()).unwrap();
-        let middlewares = middleware_data.middlewares.lock().unwrap();
+            ModuleData::new(&middlewares_file.to_str().unwrap().to_string()).unwrap();
+        let middlewares = &middleware_data.middlewares.lock().unwrap();
         assert_eq!(
-            middlewares.as_slice(),
-            [DebugItemFn {
+            middlewares.get(0).unwrap(),
+            &DebugItemFn {
                 fn_call_str: "test_middleware()".to_string(),
                 type_of_fn: TuonoFunction::Middleware,
-            }]
+            }
         );
     }
 
@@ -289,7 +290,7 @@ mod tests {
         let mut file = File::create(&middlewares_file).unwrap();
         writeln!(
             file,
-            "#[tuono_lib::middleware]\nfn test_middleware() {{}}\nfn other_fn() {{}}"
+            "#[tuono_lib::middleware]\npub fn test_middleware() {{}}\npub fn other_fn() {{}}"
         )
         .unwrap();
         #[allow(unused)]
